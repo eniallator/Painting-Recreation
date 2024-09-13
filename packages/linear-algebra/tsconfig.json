@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.common.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "outDir": "./dist"
+    // "noUncheckedIndexedAccess": false
+  },
+  "exclude": ["dist"],
+  "include": ["src"]
+}
