@@ -110,3 +110,15 @@ export function mapObject<const O extends object, const N extends object>(
 export function posMod(a: number, b: number): number {
   return ((a % b) + b) % b;
 }
+
+export function range(start: number, stop: number, step: number = 1): number[] {
+  const out: number[] = [];
+  for (let i = start; i < stop; i += step) {
+    out.push(i);
+  }
+  return out;
+}
+
+export function randRange(min: number, max: number): number {
+  return Math.random() * (max - min) + min;
+}
