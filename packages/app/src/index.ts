@@ -13,6 +13,8 @@ const minAge = 10;
 const maxAge = 20;
 const maxAngleOffset = Math.PI / 6;
 const preferredDirInfluence = 0.5;
+const treesOnScreen = 10;
+const viewShiftSpeed = 0.01;
 
 interface Segment {
   start: Vector<2>;
@@ -22,6 +24,7 @@ interface Segment {
 
 interface Tree {
   created: number;
+  xPercent: number;
   maxAge: number;
   root: Segment;
 }
@@ -76,9 +79,10 @@ function createSegmentsRecursive(
   }
 }
 
-function createTree(now: number): Tree {
+function createTree(created: number, xPercent: number): Tree {
   return {
-    created: now,
+    created,
+    xPercent,
     maxAge: randRange(minAge, maxAge),
     root: createSegmentsRecursive(
       { start: Vector.DOWN, end: Vector.zero(2) },
@@ -109,6 +113,15 @@ function drawSegmentRecursive(
   }
 }
 
+function checkSegmentsInBounds(segment: Segment, xOffset: number): boolean {
+  return (
+    segment.start.x() + xOffset > 0 ||
+    segment.end.x() + xOffset > 0 ||
+    (segment.children?.some(child => checkSegmentsInBounds(child, xOffset)) ??
+      false)
+  );
+}
+
 interface State {
   trees: Tree[];
 }
@@ -120,7 +133,16 @@ function init({ ctx, time }: AppContext<typeof config>): State {
   ctx.lineCap = "round";
 
   return {
-    trees: new Array(10).fill(undefined).map(() => createTree(time.now)),
+    trees: new Array(treesOnScreen)
+      .fill(undefined)
+      .map((_, i, arr) =>
+        createTree(
+          time.now -
+            ((arr.length - 1 - i) / (arr.length - 1)) *
+              (maxGrowth / growthPerSecond),
+          i / (arr.length - 1)
+        )
+      ),
   };
 }
 
@@ -133,18 +155,35 @@ function animationFrame({
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const dimensions = Vector.create(canvas.width, canvas.height);
 
+  const lastTree = state.trees[state.trees.length - 1];
+  if (
+    lastTree != null &&
+    time.now - lastTree.created > 1 / (treesOnScreen * viewShiftSpeed)
+  ) {
+    state.trees.push(createTree(time.now, 1));
+  }
+
+  const trees = state.trees
+    .map(tree => ({
+      ...tree,
+      xPercent: tree.xPercent - viewShiftSpeed * time.delta,
+    }))
+    .filter(tree =>
+      checkSegmentsInBounds(tree.root, dimensions.x() * tree.xPercent)
+    );
+
   ctx.beginPath();
-  state.trees.forEach((tree, i) => {
+  trees.forEach(tree => {
     drawSegmentRecursive(
       ctx,
       tree.root,
-      dimensions.with(0, ((i + 0.5) * dimensions.x()) / state.trees.length),
+      dimensions.with(0, dimensions.x() * tree.xPercent),
       time.now - tree.created
     );
   });
   ctx.stroke();
 
-  return state;
+  return { ...state, trees };
 }
 
 export default appMethods.stateful({ init, animationFrame });
