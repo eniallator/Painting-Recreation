@@ -7,7 +7,7 @@ import { createNoise2D } from "simplex-noise";
 const branchChance = 0.1;
 const maxBranches = 2;
 const maxGrowth = 1;
-const growthPerSecond = 0.06;
+const growthPerSecond = 0.04;
 const minSegmentLength = 0.06;
 const maxSegmentLength = 0.12;
 const minAge = 0.02;
@@ -138,11 +138,17 @@ function drawSegmentRecursive(
   }
 }
 
-function checkSegmentsInBounds(segment: Segment, xOffset: number): boolean {
+function checkSegmentsInBounds(
+  segment: Segment,
+  xOffset: number,
+  yScale: number
+): boolean {
   return (
-    segment.start.x() + xOffset > 0 ||
-    segment.end.x() + xOffset > 0 ||
-    (segment.children?.some(child => checkSegmentsInBounds(child, xOffset)) ??
+    yScale * segment.start.x() + xOffset > 0 ||
+    yScale * segment.end.x() + xOffset > 0 ||
+    (segment.children?.some(child =>
+      checkSegmentsInBounds(child, xOffset, yScale)
+    ) ??
       false)
   );
 }
@@ -187,23 +193,26 @@ function animationFrame({
     state.trees.push(createTree(time.now, 1));
   }
 
+  const yScale = dimensions.y() * 0.8;
+
   const trees = state.trees
     .map(tree => ({
       ...tree,
       xPercent: tree.xPercent - viewShiftSpeed * time.delta,
     }))
     .filter(tree =>
-      checkSegmentsInBounds(tree.root, dimensions.x() * tree.xPercent)
+      checkSegmentsInBounds(tree.root, dimensions.x() * tree.xPercent, yScale)
     );
 
   for (let i = backgroundPalette.length - 1; i >= 0; i--) {
     ctx.fillStyle = `#${backgroundPalette[i]}`;
-    const yLine = (1 - (i + 1) / backgroundPalette.length) * dimensions.y();
-    const yOffset = ((1 / backgroundPalette.length) * dimensions.y()) / 2;
 
     if (i === backgroundPalette.length - 1) {
       ctx.fillRect(0, 0, dimensions.x(), dimensions.y());
     } else {
+      const yOffset = ((1 / backgroundPalette.length) * dimensions.y()) / 1.5;
+      const yLine = (1 - (i + 1) / backgroundPalette.length) * dimensions.y();
+
       ctx.beginPath();
       ctx.moveTo(dimensions.x(), dimensions.y());
       ctx.lineTo(0, dimensions.y());
@@ -232,7 +241,7 @@ function animationFrame({
       tree.root,
       dimensions.with(0, dimensions.x() * tree.xPercent),
       time.now - tree.created,
-      dimensions.y() * 0.8
+      yScale
     );
   });
   ctx.stroke();
