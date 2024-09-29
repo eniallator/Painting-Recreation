@@ -13,7 +13,8 @@
     "@web-art/config-parser": "^workspace:",
     "@web-art/core": "^workspace:",
     "@web-art/linear-algebra": "^workspace:",
-    "gh-pages": "^6.1.1"
+    "gh-pages": "^6.1.1",
+    "simplex-noise": "^4.0.3"
   },
   "devDependencies": {
     "@babel/core": "^7.24.9",
