@@ -1,9 +1,13 @@
-import { randRange } from "@web-art/core";
+import { randRange, tuple } from "@web-art/core";
 import { Vector } from "@web-art/linear-algebra";
 import config from "./config";
 import { AppContext, AppContextWithState, appMethods } from "./lib/types";
 import { createNoise2D } from "simplex-noise";
 
+// Global
+const viewShiftSpeed = 0.03;
+
+// Trees
 const branchChance = 0.1;
 const maxBranches = 2;
 const maxGrowth = 1;
@@ -14,12 +18,27 @@ const minAge = 0.02;
 const maxAge = 0.04;
 const maxAngleOffset = Math.PI / 6;
 const preferredDirInfluence = 0.5;
-const treesOnScreen = 10;
-const viewShiftSpeed = 0.03;
-const noise2D = createNoise2D();
-const noiseScale = 0.002;
-const backgroundIncrements = 100;
+const treesOnScreen = (dimensions: Vector<2>) =>
+  Math.min(
+    Math.max(Math.floor((dimensions.x() / dimensions.y() - 0.6) * 8), 3),
+    15
+  );
+const colorSize = 0.03;
+const treePalette = [
+  "97729B",
+  "99A39A",
+  "4D917F",
+  "F9EFF7",
+  "D9D4CE",
+  "CCC3B4",
+  "B3B69B",
+];
+const minRadiusMultiplier = 0.006;
+const maxRadiusMultiplier = 0.04;
 
+// background
+const noiseScale = 0.0013;
+const backgroundIncrements = 100;
 const backgroundPalette = [
   "845537",
   "BCA269",
@@ -31,9 +50,13 @@ const backgroundPalette = [
   "BED6E0",
 ];
 
+const noise2D = createNoise2D();
+
 interface Segment {
   start: Vector<2>;
   end: Vector<2>;
+  length: number;
+  colorStops: [number, string][];
   children?: Segment[];
 }
 
@@ -44,16 +67,38 @@ interface Tree {
   root: Segment;
 }
 
+function randChoice<T>(arr: T[]): T | undefined {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 function createSegment(parent: Segment, preferredDir: Vector<2>): Segment {
+  const length = randRange(minSegmentLength, maxSegmentLength);
+  const lastParentColorStop = parent.colorStops[parent.colorStops.length - 1];
+  const colorStopOffset =
+    lastParentColorStop != null
+      ? parent.length * (1 - lastParentColorStop[0])
+      : 0;
+
   return {
+    length,
     start: parent.end,
     end: Vector.UP.setAngle(
       maxAngleOffset * (2 * Math.random() - 1) +
         parent.end.copy().sub(parent.start).getAngle()
     )
       .lerp(preferredDir, Math.pow(Math.random(), 1 / preferredDirInfluence))
-      .setMagnitude(randRange(minSegmentLength, maxSegmentLength))
+      .setMagnitude(length)
       .add(parent.end),
+    colorStops: new Array(
+      Math.ceil((length - colorStopOffset) / colorSize + 1e-5)
+    )
+      .fill(undefined)
+      .map((_, i) =>
+        tuple(
+          (i * colorSize + colorStopOffset) / length,
+          randChoice(treePalette) ?? "white"
+        )
+      ),
   };
 }
 
@@ -63,31 +108,26 @@ function createSegmentsRecursive(
   preferredDir: Vector<2>
 ): Segment {
   const segment = createSegment(parent, preferredDir);
-  const length = segment.start.distTo(segment.end);
-  if (length > maxGrowth) {
+  if (segment.length > maxGrowth) {
     return segment;
   } else {
+    let numBranches = 1;
+    for (let i = 0; i < maxBranches; i++) {
+      numBranches += Number(Math.random() < branchChance);
+    }
+    const parentDir =
+      parent.end.x() > parent.start.x() ? Vector.RIGHT : Vector.LEFT;
     return {
       ...segment,
-      children: new Array(
-        1 +
-          new Array<number>(maxBranches)
-            .fill(branchChance)
-            .reduce((acc, curr) => acc + Number(Math.random() < curr), 0)
-      )
+      children: new Array(numBranches)
         .fill(undefined)
         .map((_, i) =>
           createSegmentsRecursive(
             segment,
-            (maxGrowth - length) * (i === 0 ? 1 : 0.4),
+            (maxGrowth - segment.length) * (i === 0 ? 1 : 0.4),
             i === 0
               ? preferredDir
-              : Vector.UP.lerp(
-                  parent.end.x() > parent.start.x()
-                    ? Vector.RIGHT
-                    : Vector.LEFT,
-                  Math.random() ** 0.25
-                )
+              : Vector.UP.lerp(parentDir, Math.random() ** 0.25)
           )
         ),
     };
@@ -100,54 +140,93 @@ function createTree(created: number, xPercent: number): Tree {
     xPercent,
     maxAge: randRange(minAge, maxAge),
     root: createSegmentsRecursive(
-      { start: Vector.DOWN, end: Vector.zero(2) },
+      { start: Vector.DOWN, end: Vector.zero(2), length: 1, colorStops: [] },
       maxGrowth * (1 - Math.random() * 0.2),
       Vector.UP
     ),
   };
 }
 
-function drawSegmentRecursive(
-  ctx: CanvasRenderingContext2D,
-  segment: Segment,
-  offset: Vector<2>,
-  age: number,
-  yScale: number
-): void {
-  const length = segment.start.distTo(segment.end);
-  const timeToGrow = length / growthPerSecond;
+function drawSegmentRecursive({
+  ctx,
+  segment,
+  parent,
+  offset,
+  age,
+  scale,
+}: {
+  ctx: CanvasRenderingContext2D;
+  segment: Segment;
+  parent?: Segment;
+  offset: Vector<2>;
+  age: number;
+  scale: number;
+}): void {
+  const drawStart = segment.start.copy().multiply(scale).add(offset);
+  const drawEnd = segment.end.copy().multiply(scale).add(offset);
 
-  ctx.moveTo(
-    yScale * segment.start.x() + offset.x(),
-    yScale * segment.start.y() + offset.y()
+  const timeToGrow = segment.length / growthPerSecond;
+  const drawEndLerped =
+    age < timeToGrow ? drawStart.lerp(drawEnd, age / timeToGrow) : drawEnd;
+
+  const gradient = ctx.createLinearGradient(
+    drawStart.x(),
+    drawStart.y(),
+    drawEnd.x(),
+    drawEnd.y()
   );
-  if (timeToGrow <= age) {
-    ctx.lineTo(
-      yScale * segment.end.x() + offset.x(),
-      yScale * segment.end.y() + offset.y()
-    );
+  const lastParentColor = parent?.colorStops[parent.colorStops.length - 1]?.[1];
+  const firstStop = segment.colorStops[0]?.[0];
+  if (lastParentColor != null && firstStop != null && firstStop > 0) {
+    gradient.addColorStop(firstStop, `#${lastParentColor}`);
+  }
+  segment.colorStops.forEach(([stop, col], i) => {
+    gradient.addColorStop(stop, `#${col}`);
+    const nextStop = segment.colorStops[i + 1]?.[0];
+    if (nextStop != null) {
+      gradient.addColorStop(nextStop, `#${col}`);
+    }
+  });
+
+  ctx.strokeStyle = gradient;
+  ctx.lineCap = "round";
+  ctx.lineWidth = Math.max(
+    1,
+    scale *
+      (minRadiusMultiplier +
+        (maxRadiusMultiplier - minRadiusMultiplier) *
+          (age / (maxGrowth / growthPerSecond)))
+  );
+
+  ctx.beginPath();
+  ctx.moveTo(drawStart.x(), drawStart.y());
+  ctx.lineTo(drawEndLerped.x(), drawEndLerped.y());
+  ctx.stroke();
+
+  if (age > timeToGrow) {
     segment.children?.forEach(child => {
-      drawSegmentRecursive(ctx, child, offset, age - timeToGrow, yScale);
+      drawSegmentRecursive({
+        ctx,
+        parent: segment,
+        segment: child,
+        offset,
+        age: age - timeToGrow,
+        scale: scale,
+      });
     });
-  } else {
-    const endPos = segment.start.lerp(segment.end, age / timeToGrow);
-    ctx.lineTo(
-      yScale * endPos.x() + offset.x(),
-      yScale * endPos.y() + offset.y()
-    );
   }
 }
 
 function checkSegmentsInBounds(
   segment: Segment,
   xOffset: number,
-  yScale: number
+  scale: number
 ): boolean {
   return (
-    yScale * segment.start.x() + xOffset > 0 ||
-    yScale * segment.end.x() + xOffset > 0 ||
+    scale * segment.start.x() + xOffset > 0 ||
+    scale * segment.end.x() + xOffset > 0 ||
     (segment.children?.some(child =>
-      checkSegmentsInBounds(child, xOffset, yScale)
+      checkSegmentsInBounds(child, xOffset, scale)
     ) ??
       false)
   );
@@ -157,14 +236,9 @@ interface State {
   trees: Tree[];
 }
 
-function init({ ctx, time }: AppContext<typeof config>): State {
-  ctx.fillStyle = "black";
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 5;
-  ctx.lineCap = "round";
-
+function init({ time, canvas }: AppContext<typeof config>): State {
   return {
-    trees: new Array(treesOnScreen)
+    trees: new Array(treesOnScreen(Vector.create(canvas.width, canvas.height)))
       .fill(undefined)
       .map((_, i, arr) =>
         createTree(
@@ -188,12 +262,13 @@ function animationFrame({
   const lastTree = state.trees[state.trees.length - 1];
   if (
     lastTree != null &&
-    time.now - lastTree.created > 1 / (treesOnScreen * viewShiftSpeed)
+    time.now - lastTree.created >
+      1 / (treesOnScreen(dimensions) * viewShiftSpeed)
   ) {
     state.trees.push(createTree(time.now, 1));
   }
 
-  const yScale = dimensions.y() * 0.8;
+  const scale = dimensions.y() * 0.8;
 
   const trees = state.trees
     .map(tree => ({
@@ -201,16 +276,17 @@ function animationFrame({
       xPercent: tree.xPercent - viewShiftSpeed * time.delta,
     }))
     .filter(tree =>
-      checkSegmentsInBounds(tree.root, dimensions.x() * tree.xPercent, yScale)
+      checkSegmentsInBounds(tree.root, dimensions.x() * tree.xPercent, scale)
     );
 
+  const backgroundOffset =
+    ((1 / backgroundPalette.length) * dimensions.y()) / 1.5;
   for (let i = backgroundPalette.length - 1; i >= 0; i--) {
     ctx.fillStyle = `#${backgroundPalette[i]}`;
 
     if (i === backgroundPalette.length - 1) {
       ctx.fillRect(0, 0, dimensions.x(), dimensions.y());
     } else {
-      const yOffset = ((1 / backgroundPalette.length) * dimensions.y()) / 1.5;
       const yLine = (1 - (i + 1) / backgroundPalette.length) * dimensions.y();
 
       ctx.beginPath();
@@ -227,24 +303,22 @@ function animationFrame({
                   (viewShiftSpeed * time.now),
               yLine
             ) *
-              yOffset
+              backgroundOffset
         );
       }
       ctx.fill();
     }
   }
 
-  ctx.beginPath();
   trees.forEach(tree => {
-    drawSegmentRecursive(
+    drawSegmentRecursive({
       ctx,
-      tree.root,
-      dimensions.with(0, dimensions.x() * tree.xPercent),
-      time.now - tree.created,
-      yScale
-    );
+      segment: tree.root,
+      offset: dimensions.with(0, dimensions.x() * tree.xPercent),
+      age: time.now - tree.created,
+      scale: scale,
+    });
   });
-  ctx.stroke();
 
   return { ...state, trees };
 }
