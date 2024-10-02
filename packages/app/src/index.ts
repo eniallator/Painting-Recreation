@@ -56,7 +56,9 @@ interface Segment {
   start: Vector<2>;
   end: Vector<2>;
   length: number;
+  maxLeafDist: number;
   colorStops: [number, string][];
+  widthMultiplier: number;
   children?: Segment[];
 }
 
@@ -71,7 +73,11 @@ function randChoice<T>(arr: T[]): T | undefined {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function createSegment(parent: Segment, preferredDir: Vector<2>): Segment {
+function createSegment(
+  parent: Segment,
+  preferredDir: Vector<2>,
+  widthMultiplier: number
+): Segment {
   const length = randRange(minSegmentLength, maxSegmentLength);
   const lastParentColorStop = parent.colorStops[parent.colorStops.length - 1];
   const colorStopOffset =
@@ -81,6 +87,8 @@ function createSegment(parent: Segment, preferredDir: Vector<2>): Segment {
 
   return {
     length,
+    maxLeafDist: length,
+    widthMultiplier,
     start: parent.end,
     end: Vector.UP.setAngle(
       maxAngleOffset * (2 * Math.random() - 1) +
@@ -89,9 +97,7 @@ function createSegment(parent: Segment, preferredDir: Vector<2>): Segment {
       .lerp(preferredDir, Math.pow(Math.random(), 1 / preferredDirInfluence))
       .setMagnitude(length)
       .add(parent.end),
-    colorStops: new Array(
-      Math.ceil((length - colorStopOffset) / colorSize + 1e-5)
-    )
+    colorStops: new Array(Math.ceil((length - colorStopOffset) / colorSize))
       .fill(undefined)
       .map((_, i) =>
         tuple(
@@ -105,9 +111,10 @@ function createSegment(parent: Segment, preferredDir: Vector<2>): Segment {
 function createSegmentsRecursive(
   parent: Segment,
   maxGrowth: number,
-  preferredDir: Vector<2>
+  preferredDir: Vector<2>,
+  widthMultiplier: number
 ): Segment {
-  const segment = createSegment(parent, preferredDir);
+  const segment = createSegment(parent, preferredDir, widthMultiplier);
   if (segment.length > maxGrowth) {
     return segment;
   } else {
@@ -117,19 +124,29 @@ function createSegmentsRecursive(
     }
     const parentDir =
       parent.end.x() > parent.start.x() ? Vector.RIGHT : Vector.LEFT;
+    const children = new Array(numBranches)
+      .fill(undefined)
+      .map((_, i) =>
+        i === 0
+          ? createSegmentsRecursive(
+              segment,
+              maxGrowth - segment.length,
+              preferredDir,
+              segment.widthMultiplier
+            )
+          : createSegmentsRecursive(
+              segment,
+              (maxGrowth - segment.length) * 0.4,
+              Vector.UP.lerp(parentDir, Math.random() ** 0.25),
+              (segment.widthMultiplier * 0.3) ** 0.5
+            )
+      );
     return {
       ...segment,
-      children: new Array(numBranches)
-        .fill(undefined)
-        .map((_, i) =>
-          createSegmentsRecursive(
-            segment,
-            (maxGrowth - segment.length) * (i === 0 ? 1 : 0.4),
-            i === 0
-              ? preferredDir
-              : Vector.UP.lerp(parentDir, Math.random() ** 0.25)
-          )
-        ),
+      children,
+      maxLeafDist:
+        segment.maxLeafDist +
+        children.reduce((max, child) => Math.max(max, child.maxLeafDist), 0),
     };
   }
 }
@@ -138,12 +155,20 @@ function createTree(created: number, xPercent: number): Tree {
   return {
     created,
     xPercent,
-    maxAge: randRange(minAge, maxAge),
     root: createSegmentsRecursive(
-      { start: Vector.DOWN, end: Vector.zero(2), length: 1, colorStops: [] },
+      {
+        start: Vector.DOWN,
+        end: Vector.zero(2),
+        length: 1,
+        maxLeafDist: 0,
+        widthMultiplier: 1,
+        colorStops: [],
+      },
       maxGrowth * (1 - Math.random() * 0.2),
-      Vector.UP
+      Vector.UP,
+      1
     ),
+    maxAge: randRange(minAge, maxAge),
   };
 }
 
@@ -192,10 +217,11 @@ function drawSegmentRecursive({
   ctx.lineCap = "round";
   ctx.lineWidth = Math.max(
     1,
-    scale *
+    segment.widthMultiplier *
+      scale *
       (minRadiusMultiplier +
-        (maxRadiusMultiplier - minRadiusMultiplier) *
-          (age / (maxGrowth / growthPerSecond)))
+        ((maxRadiusMultiplier - minRadiusMultiplier) * age * growthPerSecond) /
+          maxGrowth)
   );
 
   ctx.beginPath();
@@ -259,11 +285,12 @@ function animationFrame({
 }: AppContextWithState<typeof config, State>): State {
   const dimensions = Vector.create(canvas.width, canvas.height);
 
+  const numTrees = treesOnScreen(dimensions);
+
   const lastTree = state.trees[state.trees.length - 1];
   if (
-    lastTree != null &&
-    time.now - lastTree.created >
-      1 / (treesOnScreen(dimensions) * viewShiftSpeed)
+    lastTree == null ||
+    time.now - lastTree.created > 1 / (viewShiftSpeed * 4)
   ) {
     state.trees.push(createTree(time.now, 1));
   }
@@ -273,7 +300,7 @@ function animationFrame({
   const trees = state.trees
     .map(tree => ({
       ...tree,
-      xPercent: tree.xPercent - viewShiftSpeed * time.delta,
+      xPercent: tree.xPercent - (viewShiftSpeed * time.delta * 4) / numTrees,
     }))
     .filter(tree =>
       checkSegmentsInBounds(tree.root, dimensions.x() * tree.xPercent, scale)
@@ -299,8 +326,11 @@ function animationFrame({
           yLine +
             noise2D(
               noiseScale * xPos +
-                ((backgroundPalette.length - i - 1) / 3) *
-                  (viewShiftSpeed * time.now),
+                ((backgroundPalette.length - i - 1) *
+                  viewShiftSpeed *
+                  numTrees ** 0.5 *
+                  time.now) /
+                  30,
               yLine
             ) *
               backgroundOffset
@@ -315,7 +345,10 @@ function animationFrame({
       ctx,
       segment: tree.root,
       offset: dimensions.with(0, dimensions.x() * tree.xPercent),
-      age: time.now - tree.created,
+      age: Math.min(
+        time.now - tree.created,
+        tree.root.maxLeafDist / growthPerSecond
+      ),
       scale: scale,
     });
   });
