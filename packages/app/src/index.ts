@@ -18,11 +18,7 @@ const minAge = 0.02;
 const maxAge = 0.04;
 const maxAngleOffset = Math.PI / 6;
 const preferredDirInfluence = 0.5;
-const treesOnScreen = (dimensions: Vector<2>) =>
-  Math.min(
-    Math.max(Math.floor((dimensions.x() / dimensions.y() - 0.6) * 8), 3),
-    15
-  );
+const treeSpacingMultiplier = 0.25;
 const colorSize = 0.03;
 const treePalette = [
   "97729B",
@@ -217,7 +213,7 @@ function drawSegmentRecursive({
   ctx.lineCap = "round";
   ctx.lineWidth = Math.max(
     1,
-    segment.widthMultiplier *
+    Math.min((segment.maxLeafDist + segment.widthMultiplier) / 1.5, 1) *
       scale *
       (minRadiusMultiplier +
         ((maxRadiusMultiplier - minRadiusMultiplier) * age * growthPerSecond) /
@@ -264,7 +260,9 @@ interface State {
 
 function init({ time, canvas }: AppContext<typeof config>): State {
   return {
-    trees: new Array(treesOnScreen(Vector.create(canvas.width, canvas.height)))
+    trees: new Array(
+      Math.floor(canvas.width / (canvas.height * treeSpacingMultiplier))
+    )
       .fill(undefined)
       .map((_, i, arr) =>
         createTree(
@@ -285,12 +283,11 @@ function animationFrame({
 }: AppContextWithState<typeof config, State>): State {
   const dimensions = Vector.create(canvas.width, canvas.height);
 
-  const numTrees = treesOnScreen(dimensions);
-
   const lastTree = state.trees[state.trees.length - 1];
   if (
     lastTree == null ||
-    time.now - lastTree.created > 1 / (viewShiftSpeed * 4)
+    dimensions.x() * (1 - lastTree.xPercent) >
+      dimensions.y() * treeSpacingMultiplier
   ) {
     state.trees.push(createTree(time.now, 1));
   }
@@ -300,14 +297,19 @@ function animationFrame({
   const trees = state.trees
     .map(tree => ({
       ...tree,
-      xPercent: tree.xPercent - (viewShiftSpeed * time.delta * 4) / numTrees,
+      xPercent:
+        tree.xPercent -
+        (viewShiftSpeed * time.delta * 4 * treeSpacingMultiplier) /
+          (dimensions.x() / dimensions.y()),
     }))
     .filter(tree =>
       checkSegmentsInBounds(tree.root, dimensions.x() * tree.xPercent, scale)
     );
 
-  const backgroundOffset =
-    ((1 / backgroundPalette.length) * dimensions.y()) / 1.5;
+  const noiseMultiplier =
+    (viewShiftSpeed * treeSpacingMultiplier * time.now) /
+    (4 * (dimensions.y() / dimensions.x()));
+  const backgroundOffset = (1 / backgroundPalette.length) * scale * 0.8;
   for (let i = backgroundPalette.length - 1; i >= 0; i--) {
     ctx.fillStyle = `#${backgroundPalette[i]}`;
 
@@ -321,20 +323,12 @@ function animationFrame({
       ctx.lineTo(0, dimensions.y());
       for (let j = 0; j < backgroundIncrements; j++) {
         const xPos = (dimensions.x() * j) / (backgroundIncrements - 1);
-        ctx.lineTo(
-          xPos,
-          yLine +
-            noise2D(
-              noiseScale * xPos +
-                ((backgroundPalette.length - i - 1) *
-                  viewShiftSpeed *
-                  numTrees ** 0.5 *
-                  time.now) /
-                  30,
-              yLine
-            ) *
-              backgroundOffset
+        const noiseOffset = noise2D(
+          noiseScale * xPos +
+            (backgroundPalette.length - i - 1) * noiseMultiplier,
+          yLine
         );
+        ctx.lineTo(xPos, yLine + noiseOffset * backgroundOffset);
       }
       ctx.fill();
     }
@@ -343,13 +337,13 @@ function animationFrame({
   trees.forEach(tree => {
     drawSegmentRecursive({
       ctx,
+      scale,
       segment: tree.root,
       offset: dimensions.with(0, dimensions.x() * tree.xPercent),
       age: Math.min(
         time.now - tree.created,
         tree.root.maxLeafDist / growthPerSecond
       ),
-      scale: scale,
     });
   });
 
