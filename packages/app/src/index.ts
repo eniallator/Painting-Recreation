@@ -1,10 +1,11 @@
-import { Option, randRange, tuple } from "@web-art/core";
+import { Option, randChoice, randRange, tuple } from "@web-art/core";
 import { Vector } from "@web-art/linear-algebra";
 import config from "./config";
 import { AppContext, AppContextWithState, appMethods } from "./lib/types";
 import { createNoise2D } from "simplex-noise";
 
 // Global
+const goldenRatio = (1 + Math.sqrt(5)) / 2;
 const viewShiftSpeed = 0.03;
 
 // Trees
@@ -43,6 +44,7 @@ const leafSpacingMax = 0.03;
 const leafFallSpeed = 2;
 const leafSidewaysFallSpeed = 0.02;
 const leafSidewaysFallOffset = 0.03;
+const leafMaxDownVelOffset = 0.01;
 const leafWidthMultiplier = 0.01;
 const leafLengthMultiplier = 0.01;
 const leafPalette = [
@@ -97,10 +99,6 @@ interface Tree {
   maxX: number;
 }
 
-function randChoice<T>(arr: T[]): T | undefined {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
 function createSegment(
   parent: Segment,
   preferredDir: Vector<2>,
@@ -128,7 +126,6 @@ function createSegment(
     .map(leaf => (leaf.segmentPercent - 1) * parent.length)
     .getOrElse(() => 0);
 
-  // while (length > lastLeafOffset + leafSpacing) {
   while (length > lastLeafOffset + (leafSpacingMin + leafSpacingMax) / 2) {
     const segmentOffset = Math.min(
       lastLeafOffset + randRange(leafSpacingMin, leafSpacingMax),
@@ -230,6 +227,7 @@ function createTree(created: number, xPercent: number): Tree {
     Vector.UP,
     1
   );
+
   return {
     created,
     xPercent,
@@ -254,16 +252,13 @@ function drawSegmentRecursive({
   age: number;
   scale: number;
 }): void {
+  const maxGrowthAge = Math.min(age, segment.maxLeafDist / growthPerSecond);
+  const timeToGrow = segment.length / growthPerSecond;
+  const baseGrowth = maxGrowthAge / timeToGrow;
+
   const drawStart = segment.start.copy().multiply(scale).add(offset);
   const drawEnd = segment.end.copy().multiply(scale).add(offset);
-
-  const maxGrowthAge = Math.min(age, segment.maxLeafDist / growthPerSecond);
-
-  const timeToGrow = segment.length / growthPerSecond;
-  const drawEndLerped =
-    maxGrowthAge < timeToGrow
-      ? drawStart.lerp(drawEnd, maxGrowthAge / timeToGrow)
-      : drawEnd;
+  const drawEndLerped = drawStart.lerp(drawEnd, Math.min(1, baseGrowth));
 
   const gradient = ctx.createLinearGradient(
     drawStart.x(),
@@ -287,25 +282,31 @@ function drawSegmentRecursive({
   ctx.strokeStyle = gradient;
   ctx.lineCap = "round";
   ctx.lineWidth = Math.max(
-    1,
     Math.min((segment.maxLeafDist + segment.widthMultiplier) / 1.5, 1) *
       scale *
       (minRadiusMultiplier +
         ((maxRadiusMultiplier - minRadiusMultiplier) *
           maxGrowthAge *
           growthPerSecond) /
-          maxGrowth)
+          maxGrowth),
+    1
   );
-
   ctx.beginPath();
   ctx.moveTo(drawStart.x(), drawStart.y());
   ctx.lineTo(drawEndLerped.x(), drawEndLerped.y());
   ctx.stroke();
 
   const maxDistFromEnd = Math.min(segment.maxLeafDist, age * growthPerSecond);
+  const sidewaysSpeed = scale * leafSidewaysFallSpeed;
+  const sidewaysOffset = scale * leafSidewaysFallOffset;
+  const leafVec = Vector.create(scale * leafLengthMultiplier, 0);
+  const leafBoundingVec = Vector.create(
+    Infinity,
+    offset.y() - scale * leafLengthMultiplier
+  );
 
   for (const leaf of segment.leaves) {
-    if (leaf.segmentPercent <= age / timeToGrow) {
+    if (leaf.segmentPercent <= baseGrowth) {
       const distFromEnd =
         leaf.segmentPercent * segment.length -
         (maxDistFromEnd - leaf.distFromEnd);
@@ -316,28 +317,30 @@ function drawSegmentRecursive({
             leafFallSpeed,
         0
       );
+      const yOffset = leaf.pos.y() - leafYPos;
+      const offsetProgress = Math.sin(sidewaysSpeed * yOffset);
       const leafDrawPos = (
         distFromEnd > 0
           ? leaf.pos
           : Vector.create(
-              leaf.pos.x() +
-                Math.sin(
-                  scale * leafSidewaysFallSpeed * (leaf.pos.y() - leafYPos)
-                ) /
-                  (scale * leafSidewaysFallOffset),
-              leafYPos
+              leaf.pos.x() + offsetProgress / sidewaysOffset,
+              leafYPos +
+                Math.sin(sidewaysSpeed * yOffset * goldenRatio) *
+                  leafMaxDownVelOffset
             )
       )
         .copy()
         .multiply(scale)
         .add(offset)
-        .min(
-          Vector.create(Infinity, offset.y() - scale * leafLengthMultiplier)
-        );
+        .min(leafBoundingVec);
       const leafEnd = leafDrawPos
         .copy()
         .add(
-          Vector.create(scale * leafLengthMultiplier, 0).setAngle(leaf.angle)
+          leafVec.setAngle(
+            distFromEnd > 0
+              ? leaf.angle
+              : leaf.angle + (offsetProgress * Math.PI) / 2
+          )
         );
 
       ctx.strokeStyle = `#${leaf.color}`;

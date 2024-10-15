@@ -114,3 +114,7 @@ export function posMod(a: number, b: number): number {
 export function randRange(min: number, max: number): number {
   return Math.random() * (max - min) + min;
 }
+
+export function randChoice<T>(arr: T[]): T | undefined {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
