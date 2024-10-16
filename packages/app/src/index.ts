@@ -96,6 +96,7 @@ interface Tree {
   xPercent: number;
   maxAge: number;
   root: Segment;
+  minX: number;
   maxX: number;
 }
 
@@ -167,11 +168,12 @@ function createSegmentsRecursive(
   maxGrowth: number,
   preferredDir: Vector<2>,
   widthMultiplier: number
-): [Segment, number] {
+): { segment: Segment; minX: number; maxX: number } {
   const segment = createSegment(parent, preferredDir, widthMultiplier);
+  const minX = Math.min(segment.start.x(), segment.end.x());
   const maxX = Math.max(segment.start.x(), segment.end.x());
   if (segment.length > maxGrowth) {
-    return [segment, maxX];
+    return { segment, minX, maxX };
   } else {
     let numBranches = 1;
     for (let i = 0; i < maxBranches; i++) {
@@ -196,24 +198,25 @@ function createSegmentsRecursive(
               (segment.widthMultiplier * 0.3) ** 0.5
             )
       );
-    return [
-      {
+    return {
+      segment: {
         ...segment,
-        children: children.map(([seg]) => seg),
+        children: children.map(({ segment: child }) => child),
         maxLeafDist:
           segment.maxLeafDist +
           children.reduce(
-            (max, [child]) => Math.max(max, child.maxLeafDist),
+            (max, { segment: child }) => Math.max(max, child.maxLeafDist),
             0
           ),
       },
-      Math.max(maxX, ...children.map(([_, x]) => x)),
-    ];
+      minX: Math.min(minX, ...children.map(({ minX }) => minX)),
+      maxX: Math.max(maxX, ...children.map(({ maxX }) => maxX)),
+    };
   }
 }
 
 function createTree(created: number, xPercent: number): Tree {
-  const [root, maxX] = createSegmentsRecursive(
+  const { segment, minX, maxX } = createSegmentsRecursive(
     {
       start: Vector.DOWN,
       end: Vector.zero(2),
@@ -227,12 +230,15 @@ function createTree(created: number, xPercent: number): Tree {
     Vector.UP,
     1
   );
+  const xPadding =
+    maxRadiusMultiplier + leafSidewaysFallOffset + leafWidthMultiplier;
 
   return {
     created,
     xPercent,
-    root,
-    maxX,
+    root: segment,
+    minX: minX - xPadding,
+    maxX: maxX + xPadding,
     maxAge: randRange(minAge, maxAge),
   };
 }
@@ -394,6 +400,7 @@ function animationFrame({
   time,
 }: AppContextWithState<typeof config, State>): State {
   const dimensions = Vector.create(canvas.width, canvas.height);
+  const aspectRatioSqrt = (dimensions.x() / dimensions.y()) ** 0.5;
 
   const lastTree = state.trees[state.trees.length - 1];
   if (
@@ -411,22 +418,21 @@ function animationFrame({
       ...tree,
       xPercent:
         tree.xPercent -
-        (viewShiftSpeed * time.delta * 4 * treeSpacingMultiplier) /
+        (viewShiftSpeed *
+          aspectRatioSqrt *
+          time.delta *
+          4 *
+          treeSpacingMultiplier) /
           (dimensions.x() / dimensions.y()),
     }))
     .filter(
       tree =>
-        (tree.maxX +
-          maxRadiusMultiplier +
-          leafSidewaysFallOffset +
-          leafWidthMultiplier) *
-          scale +
-          dimensions.x() * tree.xPercent >
-        0
+        tree.minX * scale + dimensions.x() * tree.xPercent <= dimensions.x() &&
+        tree.maxX * scale + dimensions.x() * tree.xPercent > 0
     );
 
   const noiseMultiplier =
-    (viewShiftSpeed * treeSpacingMultiplier * time.now) /
+    (viewShiftSpeed * aspectRatioSqrt * treeSpacingMultiplier * time.now) /
     (4 * (dimensions.y() / dimensions.x()));
   const backgroundOffset = (1 / backgroundPalette.length) * scale * 0.8;
   for (let i = backgroundPalette.length - 1; i >= 0; i--) {
