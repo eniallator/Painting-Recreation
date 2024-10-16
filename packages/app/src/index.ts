@@ -299,7 +299,6 @@ function drawSegmentRecursive({
   const maxDistFromEnd = Math.min(segment.maxLeafDist, age * growthPerSecond);
   const sidewaysSpeed = scale * leafSidewaysFallSpeed;
   const sidewaysOffset = scale * leafSidewaysFallOffset;
-  const leafVec = Vector.create(scale * leafLengthMultiplier, 0);
   const leafBoundingVec = Vector.create(
     Infinity,
     offset.y() - scale * leafLengthMultiplier
@@ -317,6 +316,7 @@ function drawSegmentRecursive({
             leafFallSpeed,
         0
       );
+      const leafAge = Math.min((1 - distFromEnd / leaf.distFromEnd) ** 0.2, 1);
       const yOffset = leaf.pos.y() - leafYPos;
       const offsetProgress = Math.sin(sidewaysSpeed * yOffset);
       const leafDrawPos = (
@@ -336,7 +336,7 @@ function drawSegmentRecursive({
       const leafEnd = leafDrawPos
         .copy()
         .add(
-          leafVec.setAngle(
+          Vector.create(leafLengthMultiplier * scale * leafAge, 0).setAngle(
             distFromEnd > 0
               ? leaf.angle
               : leaf.angle + (offsetProgress * Math.PI) / 2
@@ -344,7 +344,7 @@ function drawSegmentRecursive({
         );
 
       ctx.strokeStyle = `#${leaf.color}`;
-      ctx.lineWidth = leafWidthMultiplier * scale;
+      ctx.lineWidth = leafWidthMultiplier * scale * leafAge;
       ctx.beginPath();
       ctx.moveTo(leafDrawPos.x(), leafDrawPos.y());
       ctx.lineTo(leafEnd.x(), leafEnd.y());
@@ -414,7 +414,16 @@ function animationFrame({
         (viewShiftSpeed * time.delta * 4 * treeSpacingMultiplier) /
           (dimensions.x() / dimensions.y()),
     }))
-    .filter(tree => tree.maxX * scale + dimensions.x() * tree.xPercent > 0);
+    .filter(
+      tree =>
+        (tree.maxX +
+          maxRadiusMultiplier +
+          leafSidewaysFallOffset +
+          leafWidthMultiplier) *
+          scale +
+          dimensions.x() * tree.xPercent >
+        0
+    );
 
   const noiseMultiplier =
     (viewShiftSpeed * treeSpacingMultiplier * time.now) /

@@ -171,9 +171,7 @@ export class ParamConfig<const C extends ConfigPart<string>> {
    * @param {string} id ID of the config button type
    * @returns {boolean} If the config button was clicked since the last call
    */
-  clicked<const K extends DeriveId<Extract<C, ButtonConfig<string>>>>(
-    id: K
-  ): boolean {
+  clicked(id: DeriveId<Extract<C, ButtonConfig<string>>>): boolean {
     return this.typedStateItem(id).clicked;
   }
 
