@@ -398,9 +398,12 @@ function animationFrame({
   canvas,
   ctx,
   time,
+  paramConfig,
 }: AppContextWithState<typeof config, State>): State {
   const dimensions = Vector.create(canvas.width, canvas.height);
   const aspectRatioSqrt = (dimensions.x() / dimensions.y()) ** 0.5;
+
+  const cfgSpeed = paramConfig.getVal("speed");
 
   const lastTree = state.trees[state.trees.length - 1];
   if (
@@ -418,7 +421,8 @@ function animationFrame({
       ...tree,
       xPercent:
         tree.xPercent -
-        (viewShiftSpeed *
+        (cfgSpeed *
+          viewShiftSpeed *
           aspectRatioSqrt *
           time.delta *
           4 *
@@ -432,7 +436,11 @@ function animationFrame({
     );
 
   const noiseMultiplier =
-    (viewShiftSpeed * aspectRatioSqrt * treeSpacingMultiplier * time.now) /
+    (cfgSpeed *
+      viewShiftSpeed *
+      aspectRatioSqrt *
+      treeSpacingMultiplier *
+      time.now) /
     (4 * (dimensions.y() / dimensions.x()));
   const backgroundOffset = (1 / backgroundPalette.length) * scale * 0.8;
   for (let i = backgroundPalette.length - 1; i >= 0; i--) {
@@ -465,7 +473,7 @@ function animationFrame({
       scale,
       segment: tree.root,
       offset: dimensions.with(0, dimensions.x() * tree.xPercent),
-      age: time.now - tree.created,
+      age: cfgSpeed * (time.now - tree.created),
     });
   });
 
